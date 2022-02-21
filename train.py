@@ -96,6 +96,8 @@ def run_eval_phase(model, P, Z, logger, epoch, phase):
             batch['preds_np'] = batch['preds'].clone().detach().cpu().numpy() # copy of preds for use in metrics
             batch['loss_np'] = -1
             batch['reg_loss_np'] = -1
+            batch['main_loss_np'] = -1
+            batch['cl_loss_np'] = -1
         # save current batch data:
         logger.update_phase_data(batch)
 
