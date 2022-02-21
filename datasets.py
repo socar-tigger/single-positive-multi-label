@@ -1,18 +1,20 @@
 import os
 import json
+import random
 import numpy as np
 from PIL import Image
 import torch
 import copy
 from torch.utils.data import Dataset
 from torchvision import transforms
+from PIL import Image, ImageFilter
 
 def get_metadata(dataset_name):
     if dataset_name == 'pascal':
         meta = {
             'num_classes': 20,
-            'path_to_dataset': 'data/pascal',
-            'path_to_images': 'data/pascal/VOCdevkit/VOC2012/JPEGImages'
+            'path_to_dataset': '../dataset/pascal',
+            'path_to_images': '../dataset/pascal/VOCdevkit/VOC2012/JPEGImages'
         }
     elif dataset_name == 'coco':
         meta = {
@@ -46,19 +48,62 @@ def get_imagenet_stats():
     
     return (imagenet_mean, imagenet_std)
 
-def get_transforms():
+class MultiViewTransform:
+    """Create two crops of the same image"""
+    def __init__(self, org_transform, transform):
+        self.transform = transform
+        self.org_transform = org_transform
+
+    def __call__(self, x):
+        return [self.org_transform(x), self.transform(x), self.transform(x)]
+
+class GaussianBlur(object):
+    """Gaussian blur augmentation in SimCLR https://arxiv.org/abs/2002.05709"""
+
+    def __init__(self, sigma=[.1, 2.]):
+        self.sigma = sigma
+
+    def __call__(self, x):
+        sigma = random.uniform(self.sigma[0], self.sigma[1])
+        x = x.filter(ImageFilter.GaussianBlur(radius=sigma))
+        return x
+
+def get_transforms(cl):
     '''
     Returns image transforms.
     '''
     
     (imagenet_mean, imagenet_std) = get_imagenet_stats()
     tx = {}
-    tx['train'] = transforms.Compose([
-        transforms.Resize((448, 448)),
-        transforms.RandomHorizontalFlip(0.5),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
-    ])
+    # CL 사용하지 않는 경우 
+    if not cl:
+        tx['train'] = transforms.Compose([
+            transforms.Resize((448, 448)),
+            transforms.RandomHorizontalFlip(0.5),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
+        ])
+    # CL 사용하는 경우
+    else:
+        org_transform = transforms.Compose([
+            transforms.Resize((448, 448)),
+            transforms.RandomHorizontalFlip(0.5),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
+        ])
+        cl_transform = transforms.Compose([
+                transforms.RandomResizedCrop(size=448, scale=(0.2, 1.)),
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomApply([
+                    transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
+                ], p=0.8),
+                transforms.RandomGrayscale(p=0.2),
+                # Gaussian Blur is added 
+                transforms.RandomApply([GaussianBlur([.1, 2.])], p=0.5),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
+            ])
+        tx['train'] = MultiViewTransform(org_transform, cl_transform)
     tx['val'] = transforms.Compose([
         transforms.Resize((448, 448)),
         transforms.ToTensor(),
@@ -97,7 +142,7 @@ def get_data(P):
     '''
     
     # define transforms:
-    tx = get_transforms()
+    tx = get_transforms(P['cl'])
     
     # select and return the right dataset:
     if P['dataset'] == 'coco':
@@ -177,7 +222,8 @@ class multilabel:
             source_data['train']['labels_obs'][split_idx['train'], :],
             source_data['train']['feats'][split_idx['train'], :] if P['use_feats'] else [],
             tx['train'],
-            P['use_feats']
+            P['use_feats'],
+            P['cl']
         )
             
         # define val set:
@@ -188,7 +234,8 @@ class multilabel:
             source_data['train']['labels_obs'][split_idx['val'], :],
             source_data['train']['feats'][split_idx['val'], :] if P['use_feats'] else [],
             tx['val'],
-            P['use_feats']
+            P['use_feats'],
+            False
         )
         
         # define test set:
@@ -199,7 +246,8 @@ class multilabel:
             source_data['val']['labels_obs'],
             source_data['val']['feats'],
             tx['test'],
-            P['use_feats']
+            P['use_feats'],
+            False
         )
         
         # define dict of dataset lengths: 
@@ -210,7 +258,7 @@ class multilabel:
 
 class ds_multilabel(Dataset):
 
-    def __init__(self, dataset_name, image_ids, label_matrix, label_matrix_obs, feats, tx, use_feats):
+    def __init__(self, dataset_name, image_ids, label_matrix, label_matrix_obs, feats, tx, use_feats, cl):
         meta = get_metadata(dataset_name)
         self.num_classes = meta['num_classes']
         self.path_to_images = meta['path_to_images']
@@ -221,6 +269,7 @@ class ds_multilabel(Dataset):
         self.feats = feats
         self.tx = tx
         self.use_feats = use_feats
+        self.cl = cl 
 
     def __len__(self):
         return len(self.image_ids)
@@ -229,17 +278,33 @@ class ds_multilabel(Dataset):
         if self.use_feats:
             # Set I to be a feature vector:
             I = torch.FloatTensor(np.copy(self.feats[idx, :]))
+            out = {
+                'image': I,
+                'label_vec_obs': torch.FloatTensor(np.copy(self.label_matrix_obs[idx, :])),
+                'label_vec_true': torch.FloatTensor(np.copy(self.label_matrix[idx, :])),
+                'idx': idx,
+            }
+        
         else:
             # Set I to be an image: 
             image_path = os.path.join(self.path_to_images, self.image_ids[idx])
+            
             with Image.open(image_path) as I_raw:
-                I = self.tx(I_raw.convert('RGB'))
-        
-        out = {
-            'image': I,
-            'label_vec_obs': torch.FloatTensor(np.copy(self.label_matrix_obs[idx, :])),
-            'label_vec_true': torch.FloatTensor(np.copy(self.label_matrix[idx, :])),
-            'idx': idx,
-        }
-        
+                if not self.cl:
+                    I = self.tx(I_raw.convert('RGB'))
+
+                    out = {
+                        'image': I,
+                        'label_vec_obs': torch.FloatTensor(np.copy(self.label_matrix_obs[idx, :])),
+                        'label_vec_true': torch.FloatTensor(np.copy(self.label_matrix[idx, :])),
+                        'idx': idx,
+                    }
+                else:
+                    I, V1, V2 = self.tx(I_raw.convert('RGB'))
+                    out = {
+                        'image': [I, V1, V2],
+                        'label_vec_obs': torch.FloatTensor(np.copy(self.label_matrix_obs[idx, :])),
+                        'label_vec_true': torch.FloatTensor(np.copy(self.label_matrix[idx, :])),
+                        'idx': idx,
+                    }
         return out

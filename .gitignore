@@ -1,0 +1,12 @@
+*.ipynb_checkpoints
+*.DS_Store
+*.jpg
+*.jpeg
+*.pkl
+*.pyc
+*.zip
+*.pth
+*.pt
+wandb/
+wandb*/
+results/

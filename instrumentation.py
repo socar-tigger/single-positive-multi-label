@@ -26,7 +26,9 @@ class train_logger:
         self.temp_indices = [] # indices for each example
         self.temp_batch_loss = []
         self.temp_batch_reg = []
-        
+        self.temp_batch_cl = []
+        self.temp_batch_main = []
+
         # output objects: 
         self.logs = {}
         self.logs['metrics'] = {}
@@ -61,10 +63,14 @@ class train_logger:
             self.logs['metrics'][phase][epoch]['loss'] = self.running_loss / self.num_examples
             self.logs['metrics'][phase][epoch]['est_labels_k_hat'] = float(np.mean(np.sum(labels_est, axis=1)))
             self.logs['metrics'][phase][epoch]['avg_batch_reg'] = np.mean(self.temp_batch_reg)
+            self.logs['metrics'][phase][epoch]['avg_batch_cl'] = np.mean(self.temp_batch_cl)
+            self.logs['metrics'][phase][epoch]['avg_batch_main'] = np.mean(self.temp_batch_main)
         else:
             self.logs['metrics'][phase][epoch]['loss'] = -999
             self.logs['metrics'][phase][epoch]['est_labels_k_hat'] = -999
             self.logs['metrics'][phase][epoch]['avg_batch_reg'] = -999
+            self.logs['metrics'][phase][epoch]['avg_batch_cl'] = -999
+            self.logs['metrics'][phase][epoch]['avg_batch_main'] = -999
         self.logs['metrics'][phase][epoch]['preds_k_hat'] = np.mean(np.sum(self.temp_preds, axis=1))
    
     def get_stop_metric(self, phase, epoch, variant):
@@ -90,6 +96,8 @@ class train_logger:
             self.num_examples += 1
         self.temp_batch_loss.append(float(batch['loss_np']))
         self.temp_batch_reg.append(float(batch['reg_loss_np']))
+        self.temp_batch_cl.append(float(batch['cl_loss_np']))
+        self.temp_batch_main.append(float(batch['main_loss_np']))
         self.running_loss += float(batch['loss_np'] * batch['image'].size(0))
         
     def reset_phase_data(self):
@@ -103,6 +111,8 @@ class train_logger:
         self.temp_obs = []
         self.temp_indices = []
         self.temp_batch_reg = []
+        self.temp_batch_cl = []
+        self.temp_batch_main = []
         self.running_loss = 0.0
         self.num_examples = 0.0
         

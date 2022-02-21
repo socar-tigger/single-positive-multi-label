@@ -2,6 +2,14 @@
 
 Code to reproduce the main results in the paper [Multi-Label Learning from Single Positive Labels](https://arxiv.org/abs/2106.09708) (CVPR 2021). 
 
+## Update
+Auxiliary loss(contrastive loss)를 함께 활용하는 실험을 진행할 수 있도록 수정
+```
+python train.py --cl \ # cl loss 사용
+                --cl_coef 0.3 \ # cl loss의 세기 
+                --opt sgd \  # optimizer 
+```
+
 ## Getting Started
 
 See the `README.md` file in the `data` directory for instructions on downloading and setting up the datasets.

@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn 
 import numpy as np
 import copy
 from torchvision.models import resnet50
@@ -51,7 +52,7 @@ class ImageClassifier(torch.nn.Module):
                 else:
                     print('feature extractor: randomly initialized')
                     feature_extractor = resnet50(pretrained=False)
-                feature_extractor = torch.nn.Sequential(*list(feature_extractor.children())[:-1])
+                feature_extractor = torch.nn.Sequential(*list(feature_extractor.children())[:-1]) ## fc layer 제거 
             if P['freeze_feature_extractor']:
                 print('feature extractor frozen')
                 for param in feature_extractor.parameters():
@@ -80,15 +81,17 @@ class ImageClassifier(torch.nn.Module):
         else:
             raise ValueError('Architecture not implemented.')
     
+    ## TODO: 
     def forward(self, x):
         if self.arch == 'linear':
             # x is a batch of feature vectors
             logits = self.linear_classifier(x)
+            feats = None
         else:
             # x is a batch of images
             feats = self.feature_extractor(x)
             logits = self.linear_classifier(torch.squeeze(feats))
-        return logits
+        return logits, feats
 
 class LabelEstimator(torch.nn.Module):
     
@@ -145,8 +148,12 @@ class MultilabelModel(torch.nn.Module):
         self.f = ImageClassifier(P, feature_extractor, linear_classifier)
         
         self.g = LabelEstimator(P, observed_label_matrix, estimated_labels)
-
+        self.proj_head = nn.Sequential(
+                    nn.Linear(2048, 2048),
+                    nn.ReLU(inplace=True),
+                    nn.Linear(2048, 128)
+                )
     def forward(self, batch):
-        f_logits = self.f(batch['image'])
+        f_logits, feats = self.f(batch['image'])
         g_preds = self.g(batch['idx']) # oops, we had a sigmoid here in addition to 
         return (f_logits, g_preds)
